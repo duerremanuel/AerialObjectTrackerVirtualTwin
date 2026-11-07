@@ -44,6 +44,9 @@ public static partial class WorldValidation
         RequireUnique(world.Walkers.Select(w => w.Id), "Walker id");
         foreach (var vehicle in world.Vehicles) CheckVehicle(vehicle);
         RequireUnique(world.Vehicles.Select(v => v.Id), "Vehicle id");
+        foreach (var aircraft in world.Aircraft) CheckAircraft(aircraft);
+        RequireUnique(world.Aircraft.Select(a => a.Id), "Aircraft id");
+        RequireUnique(world.Aircraft.Select(a => a.Hex), "Aircraft hex");
         foreach (var camera in world.Cameras)
         {
             CheckCamera(camera);
@@ -124,6 +127,55 @@ public static partial class WorldValidation
         Require(vehicle.Height is >= 0.5f and <= 5, $"Vehicle {vehicle.Id}: height {vehicle.Height} m is outside 0.5..5.");
         Require(vehicle.Length is >= 1 and <= 15, $"Vehicle {vehicle.Id}: length {vehicle.Length} m is outside 1..15.");
         CheckPlate($"Vehicle {vehicle.Id}", vehicle.Plate);
+    }
+
+    // Waypoints may lie beyond the terrain (an aircraft arrives from outside), but not so far that the
+    // arithmetic of a flight stops being exact.
+    private const float MaxWaypointDistance = 1_000_000;
+    private const float MinAltitude = -500;
+    private const float MaxAltitude = 30_000;
+
+    [GeneratedRegex("^[0-9A-Fa-f]{6}$")]
+    private static partial Regex HexPattern();
+
+    // Four octal digits.
+    [GeneratedRegex("^[0-7]{4}$")]
+    private static partial Regex SquawkPattern();
+
+    // ADS-B emitter categories: a set A..D and a number 0..7.
+    [GeneratedRegex("^[A-D][0-7]$")]
+    private static partial Regex CategoryPattern();
+
+    [GeneratedRegex("^[A-Z0-9]*$")]
+    private static partial Regex UpperAlphanumeric();
+
+    private static void CheckAircraft(AircraftModel aircraft)
+    {
+        string id = aircraft.Id;
+        Require(TokenPattern().IsMatch(id), $"Aircraft id '{id}' must be 1..32 letters, digits, '-' or '_'.");
+        Require(aircraft.Waypoints.Count >= 1, $"Aircraft {id} needs at least one waypoint to hover at.");
+        Require(aircraft.Waypoints.Count <= 1000, $"Aircraft {id} has {aircraft.Waypoints.Count} waypoints; at most 1000.");
+        Require(aircraft.Waypoints.All(w => float.IsFinite(w.X) && float.IsFinite(w.Z) && float.IsFinite(w.Altitude)),
+            $"Aircraft {id}: waypoints must be finite.");
+        Require(aircraft.Waypoints.All(w => Math.Abs(w.X) <= MaxWaypointDistance && Math.Abs(w.Z) <= MaxWaypointDistance),
+            $"Aircraft {id}: a waypoint is more than {MaxWaypointDistance:0} m from the origin.");
+        Require(aircraft.Waypoints.All(w => w.Altitude is >= MinAltitude and <= MaxAltitude),
+            $"Aircraft {id}: waypoint altitudes must be within {MinAltitude}..{MaxAltitude} m.");
+        Require(aircraft.Speed is >= 0 and <= 400, $"Aircraft {id}: speed {aircraft.Speed} m/s is outside 0..400.");
+        Require(aircraft.GapSeconds is >= 0 and <= 86_400, $"Aircraft {id}: the gap {aircraft.GapSeconds} s is outside 0..86400.");
+        Require(float.IsFinite(aircraft.OffsetSeconds) && Math.Abs(aircraft.OffsetSeconds) <= 1e7,
+            $"Aircraft {id}: the time offset {aircraft.OffsetSeconds} s is outside -10000000..10000000.");
+        Require(aircraft.Length is >= 0.1f and <= 100, $"Aircraft {id}: length {aircraft.Length} m is outside 0.1..100.");
+        Require(aircraft.Wingspan is >= 0.1f and <= 100, $"Aircraft {id}: wingspan {aircraft.Wingspan} m is outside 0.1..100.");
+        Require(HexPattern().IsMatch(aircraft.Hex), $"Aircraft {id}: the hex address '{aircraft.Hex}' must be six hex digits.");
+        Require(aircraft.Callsign.Length <= 8 && UpperAlphanumeric().IsMatch(aircraft.Callsign),
+            $"Aircraft {id}: the call sign must be at most 8 capital letters or digits.");
+        Require(aircraft.Registration == null || (aircraft.Registration.Length <= 10 && aircraft.Registration.All(c => char.IsAsciiLetterOrDigit(c) || c == '-')),
+            $"Aircraft {id}: the registration must be at most 10 letters, digits or hyphens.");
+        Require(aircraft.TypeCode == null || (aircraft.TypeCode.Length <= 4 && UpperAlphanumeric().IsMatch(aircraft.TypeCode)),
+            $"Aircraft {id}: the type code must be at most 4 capital letters or digits.");
+        Require(CategoryPattern().IsMatch(aircraft.Category), $"Aircraft {id}: the category '{aircraft.Category}' must be a letter A..D and a digit 0..7.");
+        Require(SquawkPattern().IsMatch(aircraft.Squawk), $"Aircraft {id}: the squawk '{aircraft.Squawk}' must be four digits, each 0..7.");
     }
 
     // A licence plate is Latin letters, digits, spaces and hyphens, at most eight characters.

@@ -540,6 +540,7 @@
       "detectable": true
     }
   ],
+  "aircraft": [],
   "cameras": [
     {
       "id": "master",

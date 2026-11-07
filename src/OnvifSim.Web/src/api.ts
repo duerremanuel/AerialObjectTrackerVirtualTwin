@@ -1,6 +1,7 @@
 import { BufferAttribute, BufferGeometry } from 'three';
 import {
   encodeTerrain,
+  type Aircraft,
   type CameraIo,
   type CameraModel,
   type Environment,
@@ -78,6 +79,8 @@ export const api = {
   deleteWalker: (id: string) => send('DELETE', `/api/walkers/${encodeURIComponent(id)}`),
   putVehicle: (vehicle: Partial<Vehicle> & Pick<Vehicle, 'id'>) => send('PUT', `/api/vehicles/${encodeURIComponent(vehicle.id)}`, vehicle),
   deleteVehicle: (id: string) => send('DELETE', `/api/vehicles/${encodeURIComponent(id)}`),
+  putAircraft: (aircraft: Partial<Aircraft> & Pick<Aircraft, 'id'>) => send('PUT', `/api/aircraft/${encodeURIComponent(aircraft.id)}`, aircraft),
+  deleteAircraft: (id: string) => send('DELETE', `/api/aircraft/${encodeURIComponent(id)}`),
   putLamp: (lamp: Partial<Lamp> & Pick<Lamp, 'id'>) => send('PUT', `/api/lamps/${encodeURIComponent(lamp.id)}`, lamp),
   deleteLamp: (id: string) => send('DELETE', `/api/lamps/${encodeURIComponent(id)}`),
   putTerrain: (terrain: Terrain) => send('PUT', '/api/terrain', encodeTerrain(terrain)),

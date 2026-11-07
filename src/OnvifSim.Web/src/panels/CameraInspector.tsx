@@ -1,6 +1,8 @@
 import { Fragment, useState } from 'react';
 import {
   effectiveStreams,
+  heightAt,
+  toGeo,
   kindColor,
   streamH264,
   streamVideo,
@@ -37,6 +39,16 @@ export function CameraInspector({ camera }: { camera: CameraModel }) {
   const status = useEditor((s) => s.status);
   const vehicles = useEditor((s) => s.world?.vehicles ?? []);
   const mounted = !!camera.mountedOnVehicleId;
+  const world = useEditor((s) => s.world);
+  // Where the camera stands on the Earth: the world's geo anchor mapped onto its place. A camera on a car
+  // moves, so only its mount is shown; ONVIF GetGeoLocation reports where it is at the moment.
+  const gps =
+    world && !mounted
+      ? {
+          ...toGeo(world.geo, camera.position.x, camera.position.z),
+          elevation: world.geo.elevation + heightAt(world.terrain, camera.position.x, camera.position.z) + camera.position.y,
+        }
+      : null;
   const change = (patch: Partial<CameraModel>) => updateCamera({ ...camera, ...patch });
   const changePosition = (patch: Partial<Vec3>) => change({ position: { ...camera.position, ...patch } });
   const changeMetadata = (patch: Partial<CameraModel['metadata']>) => change({ metadata: { ...camera.metadata, ...patch } });
@@ -82,6 +94,11 @@ export function CameraInspector({ camera }: { camera: CameraModel }) {
         <NumberField label={mounted ? 'X (right)' : 'X (east)'} value={camera.position.x} step={0.5} onChange={(x) => changePosition({ x })} />
         <NumberField label={mounted ? 'Z (back)' : 'Z (south)'} value={camera.position.z} step={0.5} onChange={(z) => changePosition({ z })} />
         <NumberField label={mounted ? 'Above the car' : 'Above ground'} value={camera.position.y} min={0} step={0.5} onChange={(y) => changePosition({ y })} />
+        {gps && (
+          <p className="muted">
+            GPS {gps.latitude.toFixed(6)}, {gps.longitude.toFixed(6)} at {gps.elevation.toFixed(1)} m (ONVIF GetGeoLocation)
+          </p>
+        )}
         <NumberField label="Heading" value={camera.heading} min={0} max={360} slider onChange={(heading) => change({ heading })} />
         <NumberField label="Pitch" value={camera.pitch} min={-90} max={90} slider onChange={(pitch) => change({ pitch })} />
         <NumberField label="Roll" value={camera.roll} min={-180} max={180} slider onChange={(roll) => change({ roll })} />

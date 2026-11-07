@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Aircraft.** A world carries `aircraft`: airplanes, helicopters and drones on waypoint paths with an altitude
+  at each point (above sea level), straight or spline (centripetal Catmull-Rom at constant speed), looping,
+  reversing or restarting after a gap. They are drawn in the cameras' pictures and in the editor, which adds a
+  draw tool, a contents group and an inspector with the waypoints (and their latitude and longitude).
+  `PUT`/`DELETE /api/aircraft/{id}` and `GET /api/aircraft/{id}/pose` serve them; camera poses now include `geo`.
+- **An adsb.lol-style feed.** `/v2/point/{lat}/{lon}/{radius}` and `/v2/hex/{hex}` answer in readsb's JSON for the
+  aircraft that transmit, so ADS-B clients can be pointed at the simulator. The camera inspector shows where
+  each fixed camera stands on the Earth.
+
 ## 0.4.0 (2026-11-05)
 
 - **A world with a place on Earth.** The world file now carries a geographic anchor (`geo`: its

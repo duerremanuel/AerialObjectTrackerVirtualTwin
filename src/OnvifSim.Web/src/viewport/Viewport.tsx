@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { Color, Vector3 } from 'three';
 import { viewColorOf, type Environment, type World } from '../model';
 import { useEditor } from '../store';
+import { AircraftsView } from './AircraftView';
 import { CameraGizmo } from './CameraGizmo';
 import { DeviceIoView } from './DeviceIoView';
 import { ObjectsView } from './ObjectsView';
@@ -32,6 +33,7 @@ export function Viewport({ world }: { world: World }) {
       <TerrainView terrain={world.terrain} />
       <ObjectsView objects={world.objects} terrain={world.terrain} />
       <RoutesView roads={world.roads} walkers={world.walkers} vehicles={world.vehicles} terrain={world.terrain} />
+      <AircraftsView aircraft={world.aircraft} geo={world.geo} terrain={world.terrain} />
       <DeviceIoView world={world} />
       {world.cameras.map((camera, index) => (
         <CameraGizmo

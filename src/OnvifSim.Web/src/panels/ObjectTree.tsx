@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { objectTypeNames, type ObjectType, type World, type WorldObject } from '../model';
+import { aircraftKindNames, objectTypeNames, type ObjectType, type World, type WorldObject } from '../model';
 import { select, useEditor, type Selection } from '../store';
 
 // Every editable thing in the world, grouped. Clicking a row selects it exactly as clicking it in the
@@ -65,6 +65,17 @@ export function ObjectTree({ world }: { world: World }) {
             detail={walker.id}
             active={isSelected('walker', walker.id)}
             onClick={() => select({ kind: 'walker', id: walker.id })}
+          />
+        ))}
+      </Group>
+      <Group title="Aircraft" count={world.aircraft.length}>
+        {world.aircraft.map((aircraft) => (
+          <Row
+            key={aircraft.id}
+            label={aircraft.callsign || aircraftKindNames[aircraft.kind]}
+            detail={aircraft.id}
+            active={isSelected('aircraft', aircraft.id)}
+            onClick={() => select({ kind: 'aircraft', id: aircraft.id })}
           />
         ))}
       </Group>

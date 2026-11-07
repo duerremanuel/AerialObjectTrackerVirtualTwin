@@ -112,6 +112,48 @@ export interface Vehicle {
   detectable: boolean;
 }
 
+export type AircraftKind = 'airplane' | 'helicopter' | 'drone';
+export type AircraftPathMode = 'loop' | 'reverse' | 'restart';
+export type AircraftInterpolation = 'linear' | 'spline';
+
+// A point of a flight: a place on the ground plane and an altitude above sea level, metres.
+export interface Waypoint {
+  x: number;
+  z: number;
+  altitude: number;
+}
+
+export interface Aircraft {
+  id: string;
+  kind: AircraftKind;
+  waypoints: Waypoint[];
+  interpolation: AircraftInterpolation;
+  path: AircraftPathMode;
+  // Metres per second along the path.
+  speed: number;
+  gapSeconds: number;
+  offsetSeconds: number;
+  // The ADS-B identity: ICAO address (six hex digits), call sign, squawk (four octal digits).
+  hex: string;
+  callsign: string;
+  registration?: string | null;
+  typeCode?: string | null;
+  category: string;
+  squawk: string;
+  // Whether the ADS-B feed reports it; off, it is still in the pictures.
+  transmitting: boolean;
+  length: number;
+  wingspan: number;
+  color?: string | null;
+  color2?: string | null;
+}
+
+export const aircraftKindNames: Record<AircraftKind, string> = {
+  airplane: 'Airplane',
+  helicopter: 'Helicopter',
+  drone: 'Drone',
+};
+
 export type CameraKind = 'fixed' | 'ptz';
 
 export type StreamCodec = 'jpeg' | 'h264';
@@ -311,6 +353,7 @@ export interface World {
   roads: Road[];
   walkers: Walker[];
   vehicles: Vehicle[];
+  aircraft: Aircraft[];
   cameras: CameraModel[];
   // Lamps a relay drives: actuators standing in the world, not parts of a camera.
   lamps: Lamp[];
@@ -353,7 +396,7 @@ type WireWorld = Omit<World, 'terrain'> & { terrain: Omit<Terrain, 'heights'> & 
 
 export function decodeWorld(json: string): World {
   const wire = JSON.parse(json) as WireWorld;
-  return { ...wire, terrain: decodeTerrain(wire.terrain) };
+  return { ...wire, aircraft: wire.aircraft ?? [], terrain: decodeTerrain(wire.terrain) };
 }
 
 function decodeTerrain(wire: WireWorld['terrain']): Terrain {
@@ -528,4 +571,196 @@ export function plateText(text: string): string {
 
 function headingOf(from: GroundPoint, to: GroundPoint): number {
   return (Math.atan2(to.x - from.x, -(to.z - from.z)) * 180) / Math.PI;
+}
+
+// ---- Aircraft ----
+
+// Where an aircraft is at a moment; the arithmetic of World/AircraftMotion.cs (FlightPath), kept in step
+// with it. Altitude is metres above sea level; heading is degrees clockwise from world north (-Z).
+export interface AircraftPose {
+  x: number;
+  z: number;
+  altitude: number;
+  heading: number;
+  groundSpeed: number;
+  verticalSpeed: number;
+}
+
+export interface FlightPath {
+  // The sampled curve, one way round or one way along.
+  points: Waypoint[];
+  distance: number[];
+  heading: number[];
+  levelShare: number[];
+  climbShare: number[];
+  length: number;
+  mode: AircraftPathMode;
+  speed: number;
+  offset: number;
+  gap: number;
+}
+
+type P3 = [number, number, number];
+
+const chordPerSample = 5;
+const minSamples = 8;
+const maxSamples = 64;
+const minKnot = 1e-4;
+
+const mod = (value: number, modulus: number) => ((value % modulus) + modulus) % modulus;
+const dist3 = (a: P3, b: P3) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+const mix = (a: P3, b: P3, wa: number, wb: number): P3 => [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb];
+const reflect = (from: P3, through: P3): P3 => [2 * through[0] - from[0], 2 * through[1] - from[1], 2 * through[2] - from[2]];
+const knot = (a: P3, b: P3) => Math.max(Math.sqrt(dist3(a, b)), minKnot);
+
+// Centripetal Catmull-Rom between p1 and p2 by the Barry-Goldman pyramid; u runs 0..1.
+function catmullRom(p0: P3, p1: P3, p2: P3, p3: P3, u: number): P3 {
+  const t0 = 0;
+  const t1 = t0 + knot(p0, p1);
+  const t2 = t1 + knot(p1, p2);
+  const t3 = t2 + knot(p2, p3);
+  const t = t1 + (t2 - t1) * u;
+  const a1 = mix(p0, p1, (t1 - t) / (t1 - t0), (t - t0) / (t1 - t0));
+  const a2 = mix(p1, p2, (t2 - t) / (t2 - t1), (t - t1) / (t2 - t1));
+  const a3 = mix(p2, p3, (t3 - t) / (t3 - t2), (t - t2) / (t3 - t2));
+  const b1 = mix(a1, a2, (t2 - t) / (t2 - t0), (t - t0) / (t2 - t0));
+  const b2 = mix(a2, a3, (t3 - t) / (t3 - t1), (t - t1) / (t3 - t1));
+  return mix(b1, b2, (t2 - t) / (t2 - t1), (t - t1) / (t2 - t1));
+}
+
+export function flightPathOf(aircraft: Pick<Aircraft, 'waypoints' | 'interpolation' | 'path' | 'speed' | 'gapSeconds' | 'offsetSeconds'>): FlightPath {
+  const w: P3[] = aircraft.waypoints.map((p) => [p.x, p.z, p.altitude]);
+  const n = w.length;
+  // Two waypoints joined into a loop are a line flown there and back.
+  const mode: AircraftPathMode = aircraft.path === 'loop' && n < 3 ? 'reverse' : aircraft.path;
+  const closed = mode === 'loop';
+  const spline = aircraft.interpolation === 'spline' && n >= 3;
+
+  const curve: P3[] = [];
+  const segments = closed ? n : n - 1;
+  for (let i = 0; i < segments; i++) {
+    const p1 = w[i];
+    const p2 = w[(i + 1) % n];
+    if (!spline) {
+      curve.push(p1);
+      continue;
+    }
+    const p0 = closed ? w[(i - 1 + n) % n] : i > 0 ? w[i - 1] : reflect(p2, p1);
+    const p3 = closed ? w[(i + 2) % n] : i + 2 < n ? w[i + 2] : reflect(p1, p2);
+    const samples = Math.min(maxSamples, Math.max(minSamples, Math.ceil(dist3(p1, p2) / chordPerSample)));
+    for (let k = 0; k < samples; k++) curve.push(catmullRom(p0, p1, p2, p3, k / samples));
+  }
+  if (n > 0) curve.push(w[closed ? 0 : n - 1]);
+
+  const distance = [0];
+  for (let i = 1; i < curve.length; i++) distance.push(distance[i - 1] + dist3(curve[i - 1], curve[i]));
+  const legs = Math.max(0, curve.length - 1);
+  const heading = new Array<number>(legs).fill(0);
+  const levelShare = new Array<number>(legs).fill(0);
+  const climbShare = new Array<number>(legs).fill(0);
+  const known = new Array<boolean>(legs).fill(false);
+  for (let i = 0; i < legs; i++) {
+    const dx = curve[i + 1][0] - curve[i][0];
+    const dz = curve[i + 1][1] - curve[i][1];
+    const da = curve[i + 1][2] - curve[i][2];
+    const level = Math.hypot(dx, dz);
+    const leg = distance[i + 1] - distance[i];
+    levelShare[i] = leg > 0 ? level / leg : 0;
+    climbShare[i] = leg > 0 ? da / leg : 0;
+    if (level > 1e-9) {
+      heading[i] = mod((Math.atan2(dx, -dz) * 180) / Math.PI, 360);
+      known[i] = true;
+    }
+  }
+  const first = known.indexOf(true);
+  for (let i = 0; i < legs; i++) if (!known[i]) heading[i] = i > 0 ? heading[i - 1] : first >= 0 ? heading[first] : 0;
+
+  return {
+    points: curve.map(([x, z, altitude]) => ({ x, z, altitude })),
+    distance,
+    heading,
+    levelShare,
+    climbShare,
+    length: curve.length === 0 ? 0 : distance[curve.length - 1],
+    mode,
+    speed: aircraft.speed,
+    offset: aircraft.offsetSeconds,
+    gap: Math.max(0, aircraft.gapSeconds),
+  };
+}
+
+function poseAlong(path: FlightPath, along: number, back: boolean): AircraftPose {
+  let lo = 0;
+  let hi = path.points.length - 2;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (path.distance[mid] <= along) lo = mid;
+    else hi = mid - 1;
+  }
+  const a = path.points[lo];
+  const b = path.points[lo + 1];
+  const leg = path.distance[lo + 1] - path.distance[lo];
+  const f = leg > 0 ? clamp((along - path.distance[lo]) / leg, 0, 1) : 0;
+  return {
+    x: a.x + (b.x - a.x) * f,
+    z: a.z + (b.z - a.z) * f,
+    altitude: a.altitude + (b.altitude - a.altitude) * f,
+    heading: back ? mod(path.heading[lo] + 180, 360) : path.heading[lo],
+    groundSpeed: path.speed * path.levelShare[lo],
+    verticalSpeed: path.speed * path.climbShare[lo] * (back ? -1 : 1),
+  };
+}
+
+// Null while a Restart path has the aircraft out of sight, or when it has no waypoints.
+export function aircraftPoseAt(path: FlightPath, timeMs: number): AircraftPose | null {
+  const count = path.points.length;
+  if (count === 0) return null;
+  if (path.length <= 0 || path.speed <= 0) {
+    const p = path.points[0];
+    return { x: p.x, z: p.z, altitude: p.altitude, heading: path.heading[0] ?? 0, groundSpeed: 0, verticalSpeed: 0 };
+  }
+  const now = Math.floor(timeMs) / 1000 + path.offset;
+  const flight = path.length / path.speed;
+  const cycle = path.mode === 'loop' ? flight : path.mode === 'reverse' ? 2 * flight : flight + path.gap;
+  let c = mod(now, cycle);
+  let back = false;
+  if (path.mode === 'restart' && c > flight) return null;
+  if (path.mode === 'reverse' && c > flight) {
+    back = true;
+    c = 2 * flight - c;
+  }
+  return poseAlong(path, c * path.speed, back);
+}
+
+// ---- The world's mapping onto the Earth, as WorldGeo.cs does it ----
+
+const earthRadius = 6378137;
+const rad = Math.PI / 180;
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+export function toGeo(geo: Geo, x: number, z: number): GeoPoint {
+  const theta = geo.north * rad;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const east = x * c - z * s;
+  const north = -x * s - z * c;
+  const cosLat = Math.max(Math.abs(Math.cos(geo.latitude * rad)), 1e-9);
+  return {
+    latitude: geo.latitude + (north / earthRadius) / rad,
+    longitude: geo.longitude + (east / (earthRadius * cosLat)) / rad,
+  };
+}
+
+export function toWorld(geo: Geo, latitude: number, longitude: number): { x: number; z: number } {
+  const cosLat = Math.max(Math.abs(Math.cos(geo.latitude * rad)), 1e-9);
+  const north = (latitude - geo.latitude) * rad * earthRadius;
+  const east = (longitude - geo.longitude) * rad * earthRadius * cosLat;
+  const theta = geo.north * rad;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  return { x: east * c - north * s, z: -east * s - north * c };
 }

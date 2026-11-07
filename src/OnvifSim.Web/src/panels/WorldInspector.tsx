@@ -45,7 +45,7 @@ export function WorldInspector({ world }: { world: World }) {
           its own card, not in the world's settings. */}
       <p className="muted">
         {world.objects.length} objects, {world.roads.length} roads, {world.walkers.length} people, {world.cameras.length} cameras,{' '}
-        {world.lamps.length} lamps.
+        {world.lamps.length} lamps, {world.aircraft.length} aircraft.
       </p>
     </>
   );

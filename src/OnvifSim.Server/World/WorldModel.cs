@@ -17,6 +17,8 @@ public sealed class WorldModel
     public List<RoadModel> Roads { get; set; } = [];
     public List<WalkerModel> Walkers { get; set; } = [];
     public List<VehicleModel> Vehicles { get; set; } = [];
+    // Aircraft flying over the world; /v2 reports them the way adsb.lol reports real ones.
+    public List<AircraftModel> Aircraft { get; set; } = [];
     public List<CameraModel> Cameras { get; set; } = [];
     // Lamps a relay drives: actuators standing in the world, not parts of a camera.
     public List<LampModel> Lamps { get; set; } = [];

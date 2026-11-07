@@ -47,6 +47,9 @@ const drawables: { what: Drawable; label: string }[] = [
   { what: 'road', label: 'Road' },
   { what: 'walker', label: 'Person' },
   { what: 'vehicle', label: 'Car route' },
+  { what: 'airplane', label: 'Airplane' },
+  { what: 'helicopter', label: 'Helicopter' },
+  { what: 'drone', label: 'Drone' },
 ];
 
 function sameTool(a: Tool, b: Tool): boolean {

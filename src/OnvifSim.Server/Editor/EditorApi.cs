@@ -115,6 +115,23 @@ public static class EditorApi
         app.MapDelete("/api/vehicles/{id}", (string id, WorldStore store, SimOptions options) =>
             Remove(store, options, world => world.Vehicles, v => v.Id == id));
 
+        // An aircraft without an ICAO address is given one derived from its id; the address is not case
+        // sensitive and is kept in lower case.
+        app.MapPut("/api/aircraft/{id}", (string id, AircraftModel aircraft, WorldStore store, SimOptions options) =>
+        {
+            aircraft.Id = id;
+            return Change(store, options, world =>
+            {
+                aircraft.Hex = string.IsNullOrWhiteSpace(aircraft.Hex)
+                    ? AircraftIdentity.HexFor(id, world.Aircraft.Where(a => !SameId(a.Id, id)).Select(a => a.Hex))
+                    : aircraft.Hex.Trim().ToLowerInvariant();
+                Upsert(world.Aircraft, aircraft, a => SameId(a.Id, id));
+            });
+        });
+
+        app.MapDelete("/api/aircraft/{id}", (string id, WorldStore store, SimOptions options) =>
+            Remove(store, options, world => world.Aircraft, a => SameId(a.Id, id)));
+
         app.MapPut("/api/cameras/{id}", (string id, CameraModel camera, WorldStore store, SimOptions options) =>
         {
             camera.Id = id;
@@ -310,6 +327,7 @@ public static class EditorApi
             {
                 utcTime = time.GetUtcNow(),
                 position = new { x = pose.Position.X, y = pose.Position.Y, z = pose.Position.Z },
+                geo = GeoOf(WorldGeo.ToGeo(scene.Current.World, new Vec3(pose.Position.X, pose.Position.Y, pose.Position.Z))),
                 heading = pose.Heading, pitch = pose.Pitch, roll = pose.Roll, hfov = pose.HFov,
                 forward = Xyz(pose.Forward), right = Xyz(pose.Right), up = Xyz(pose.Up),
                 pan = head?.Position.Pan, tilt = head?.Position.Tilt, zoom = head?.Position.Zoom,
@@ -368,6 +386,27 @@ public static class EditorApi
             return Results.Json(new
             {
                 utcTime = now, x = drive.X, y = snapshot.Scene.Terrain.HeightAt(drive.X, drive.Z), z = drive.Z, heading = drive.Heading,
+            }, CompactJson);
+        });
+
+        // Where an aircraft is, in the world and on the Earth, and whether the feed shows it. Altitude is
+        // metres above sea level, y the same height in the world's own metres; heading is the track in
+        // degrees clockwise from world north (true north is Geo.North further round). Out of sight
+        // between two flights of a Restart path, present is false and the rest is left out.
+        app.MapGet("/api/aircraft/{id}/pose", (string id, SceneState scene, TimeProvider time) =>
+        {
+            var snapshot = scene.Current;
+            if (!snapshot.World.Aircraft.Any(a => SameId(a.Id, id))) return Results.NotFound();
+            var now = time.GetUtcNow();
+            if (snapshot.Aircraft.Find(id, now) is not { } state)
+                return Results.Json(new { utcTime = now, present = false }, CompactJson);
+            var pose = state.Pose;
+            return Results.Json(new
+            {
+                utcTime = now, present = true, x = pose.X, y = state.WorldY, z = pose.Z, altitude = pose.Altitude,
+                heading = pose.Heading, trueHeading = WorldGeo.TrueHeading(snapshot.World, pose.Heading),
+                groundSpeed = pose.GroundSpeed, verticalSpeed = pose.VerticalSpeed, onGround = state.OnGround,
+                transmitting = state.Aircraft.Transmitting, geo = GeoOf(state.Geo),
             }, CompactJson);
         });
     }
@@ -433,6 +472,8 @@ public static class EditorApi
     }
 
     private static object Xyz(Vector3 v) => new { x = v.X, y = v.Y, z = v.Z };
+
+    private static object GeoOf(GeoPosition g) => new { latitude = g.Latitude, longitude = g.Longitude, elevation = g.Elevation };
 
     private static IResult WithHead(SceneState scene, string id, Action<CameraModel> command)
     {

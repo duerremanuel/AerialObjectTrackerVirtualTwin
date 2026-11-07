@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AircraftInspector } from './panels/AircraftInspector';
 import { CameraInspector } from './panels/CameraInspector';
 import { ObjectInspector } from './panels/ObjectInspector';
 import { ObjectTree } from './panels/ObjectTree';
@@ -72,6 +73,10 @@ function Inspector() {
   if (selection?.kind === 'vehicle') {
     const vehicle = world.vehicles.find((v) => v.id === selection.id);
     if (vehicle) return <VehicleInspector key={vehicle.id} vehicle={vehicle} />;
+  }
+  if (selection?.kind === 'aircraft') {
+    const aircraft = world.aircraft.find((a) => a.id === selection.id);
+    if (aircraft) return <AircraftInspector key={aircraft.id} aircraft={aircraft} />;
   }
   if (selection?.kind === 'camera') {
     const camera = world.cameras.find((c) => c.id === selection.id);

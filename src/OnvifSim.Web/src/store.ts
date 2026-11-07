@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { api, ApiError } from './api';
 import {
   cameraIoOf,
+  heightAt,
+  type Aircraft,
+  type AircraftKind,
   decodeWorld,
   nextId,
   sameId,
@@ -26,10 +29,10 @@ import {
   type WorldSwitchSignal,
 } from './model';
 
-export type Selection = { kind: 'object' | 'camera' | 'road' | 'walker' | 'vehicle' | 'lamp'; id: string };
+export type Selection = { kind: 'object' | 'camera' | 'road' | 'walker' | 'vehicle' | 'lamp' | 'aircraft'; id: string };
 export type Placeable = ObjectType | 'camera.fixed' | 'camera.ptz' | 'lamp';
 export type BrushKind = 'raise' | 'lower' | 'smooth' | 'flatten';
-export type Drawable = 'road' | 'walker' | 'vehicle';
+export type Drawable = 'road' | 'walker' | 'vehicle' | AircraftKind;
 // Which tool palette the toolbar shows. Choosing a palette does not change the active tool.
 export type ToolGroup = 'select' | 'add' | 'draw' | 'terrain';
 // Drawing a road or a walker's route point by point; extending adds the points to the end of an
@@ -291,6 +294,7 @@ type Part =
   | { kind: 'road'; id: string; value: Road | null }
   | { kind: 'walker'; id: string; value: Walker | null }
   | { kind: 'vehicle'; id: string; value: Vehicle | null }
+  | { kind: 'aircraft'; id: string; value: Aircraft | null }
   // A lamp of the world: an actuator, not a part of a camera.
   | { kind: 'lamp'; id: string; value: Lamp | null }
   // A camera's relays, inputs and the wires from its relays, which are saved together.
@@ -337,6 +341,8 @@ function currentOf(world: World, part: Part): Part {
       return { ...part, value: world.walkers.find((w) => w.id === part.id) ?? null };
     case 'vehicle':
       return { ...part, value: world.vehicles.find((v) => v.id === part.id) ?? null };
+    case 'aircraft':
+      return { ...part, value: world.aircraft.find((a) => a.id === part.id) ?? null };
     case 'lamp':
       return { ...part, value: world.lamps.find((l) => l.id === part.id) ?? null };
     case 'camera-io': {
@@ -381,6 +387,8 @@ function applyPart(world: World, part: Part): World {
       return { ...world, walkers: upsert(world.walkers, part.id, part.value) };
     case 'vehicle':
       return { ...world, vehicles: upsert(world.vehicles, part.id, part.value) };
+    case 'aircraft':
+      return { ...world, aircraft: upsert(world.aircraft, part.id, part.value) };
     case 'lamp':
       return part.value
         ? { ...world, lamps: upsert(world.lamps, part.id, part.value) }
@@ -446,6 +454,8 @@ async function sendPart(part: Part): Promise<unknown> {
       return part.value ? api.putWalker(part.value) : ignoreMissing(api.deleteWalker(part.id));
     case 'vehicle':
       return part.value ? api.putVehicle(part.value) : ignoreMissing(api.deleteVehicle(part.id));
+    case 'aircraft':
+      return part.value ? api.putAircraft(part.value) : ignoreMissing(api.deleteAircraft(part.id));
     case 'lamp':
       return part.value ? api.putLamp(part.value) : ignoreMissing(api.deleteLamp(part.id));
     case 'camera-io':
@@ -550,6 +560,14 @@ export function updateWalker(walker: Walker) {
 
 export function updateVehicle(vehicle: Vehicle) {
   change({ kind: 'vehicle', id: vehicle.id, value: vehicle });
+}
+
+export function updateAircraft(aircraft: Aircraft) {
+  change({ kind: 'aircraft', id: aircraft.id, value: aircraft });
+}
+
+export function removeAircraft(id: string) {
+  change({ kind: 'aircraft', id, value: null }, { merge: false });
 }
 
 export function updateLamp(lamp: Lamp) {
@@ -736,9 +754,12 @@ export async function finishDrawing() {
     } else if (what === 'walker') {
       const walker = world.walkers.find((w) => w.id === extending);
       if (walker) updateWalker({ ...walker, route: [...walker.route, ...points] });
-    } else {
+    } else if (what === 'vehicle') {
       const vehicle = world.vehicles.find((v) => v.id === extending);
       if (vehicle) updateVehicle({ ...vehicle, route: [...vehicle.route, ...points] });
+    } else {
+      const aircraft = world.aircraft.find((a) => a.id === extending);
+      if (aircraft) updateAircraft({ ...aircraft, waypoints: [...aircraft.waypoints, ...points.map((p) => aircraftWaypoint(world, aircraft.kind, p))] });
     }
     return;
   }
@@ -754,11 +775,16 @@ export async function finishDrawing() {
       await api.putWalker({ id, route: points });
       remember({ kind: 'walker', id, value: null }, false);
       select({ kind: 'walker', id });
-    } else {
+    } else if (what === 'vehicle') {
       const id = nextId('v', world.vehicles.map((v) => v.id));
       await api.putVehicle({ id, route: points });
       remember({ kind: 'vehicle', id, value: null }, false);
       select({ kind: 'vehicle', id });
+    } else {
+      const id = nextId('ac', world.aircraft.map((a) => a.id));
+      await api.putAircraft(newAircraft(world, what, id, points));
+      remember({ kind: 'aircraft', id, value: null }, false);
+      select({ kind: 'aircraft', id });
     }
   } catch (error) {
     showError(error);
@@ -779,7 +805,39 @@ export function movePoint(selection: Selection, index: number, point: GroundPoin
   } else if (selection.kind === 'vehicle') {
     const vehicle = world.vehicles.find((v) => v.id === selection.id);
     if (vehicle) updateVehicle({ ...vehicle, route: replace(vehicle.route) });
+  } else if (selection.kind === 'aircraft') {
+    const aircraft = world.aircraft.find((a) => a.id === selection.id);
+    // Dragging over the ground moves a waypoint sideways and leaves its altitude alone.
+    if (aircraft) updateAircraft({ ...aircraft, waypoints: aircraft.waypoints.map((w, i) => (i === index ? { ...w, ...point } : w)) });
   }
+}
+
+// What each kind of aircraft starts as: its size, pace, ADS-B emitter category and the height above the
+// ground its drawn waypoints are put at.
+export const aircraftPresets: Record<AircraftKind, Pick<Aircraft, 'speed' | 'length' | 'wingspan' | 'category' | 'typeCode'> & { agl: number; prefix: string }> = {
+  airplane: { speed: 55, length: 8.3, wingspan: 11, category: 'A1', typeCode: 'C172', agl: 150, prefix: 'N' },
+  helicopter: { speed: 35, length: 11.7, wingspan: 10.1, category: 'A7', typeCode: 'R44', agl: 80, prefix: 'H' },
+  drone: { speed: 12, length: 0.5, wingspan: 0.7, category: 'B6', typeCode: null, agl: 40, prefix: 'D' },
+};
+
+// A waypoint at a drawn spot: the preset's height above the ground there, in altitude above sea level.
+export function aircraftWaypoint(world: World, kind: AircraftKind, point: GroundPoint) {
+  return { x: point.x, z: point.z, altitude: Math.round(world.geo.elevation + heightAt(world.terrain, point.x, point.z) + aircraftPresets[kind].agl) };
+}
+
+function newAircraft(world: World, kind: AircraftKind, id: string, points: GroundPoint[]): Partial<Aircraft> & Pick<Aircraft, 'id'> {
+  const { agl: _agl, prefix, ...preset } = aircraftPresets[kind];
+  return {
+    id,
+    kind,
+    ...preset,
+    callsign: `${prefix}${id.slice(2)}`,
+    waypoints: points.map((p) => aircraftWaypoint(world, kind, p)),
+    interpolation: 'spline',
+    path: points.length > 2 ? 'loop' : 'reverse',
+    squawk: '1200',
+    transmitting: true,
+  };
 }
 
 function randomSeed(): number {

@@ -69,6 +69,16 @@ public static class SceneBuilder
         return Chunk(vehicle.Id, mesh);
     }
 
+    // An aircraft at a pose, in world coordinates; drawn anew every frame, as it flies. worldY is its
+    // height in the world's own metres (AircraftState.WorldY), the middle of the aircraft.
+    public static SceneChunk AircraftChunk(AircraftModel aircraft, AircraftPose pose, float worldY)
+    {
+        var mesh = new Mesh();
+        mesh.Append(AircraftMesh.Build(aircraft), Matrix4x4.CreateRotationY(-pose.Heading * MathF.PI / 180) *
+                                                  Matrix4x4.CreateTranslation(pose.X, worldY, pose.Z));
+        return Chunk(aircraft.Id, mesh);
+    }
+
     // How far apart the strip of a road takes the ground's height, along it and across it, and how high
     // above the ground it lies so the terrain does not show through.
     private const float RoadSampleSpacing = 2;

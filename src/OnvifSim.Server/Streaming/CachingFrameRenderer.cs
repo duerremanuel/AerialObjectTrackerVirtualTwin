@@ -9,8 +9,8 @@ namespace OnvifSim.Streaming;
 // Renders one camera's frames and remembers the last one. Rendering is deterministic, so while the scene,
 // the camera pose, the image adjustments and the size stay the same, the previous frame is exactly what a
 // new render would produce: a camera nobody moves costs a comparison per frame instead of a render (and,
-// for JPEG, an encode). Walkers and moving cars are the exception: they move, so a camera that sees any
-// draws every frame anew; so are other cameras' PTZ heads while they turn, when the picture shows
+// for JPEG, an encode). Walkers, moving cars and aircraft are the exception: they move, so a camera that
+// sees any draws every frame anew; so are other cameras' PTZ heads while they turn, when the picture shows
 // cameras. The JPEG
 // stream and the snapshots of a camera share one instance; its H.264 stream has one of its own, as its
 // size is set separately. heads says where every PTZ head is now; without it, heads are where the world
@@ -79,16 +79,18 @@ public sealed class CachingFrameRenderer(TimeProvider time, Func<CameraModel, Pt
         var walkers = WalkersInView(snapshot.World.Walkers, scene, frustum, now);
         // Its own car is where the camera is: drawing it would fill the picture with a wall of paint.
         var vehicles = VehiclesInView(snapshot.World.Vehicles, scene, frustum, now, camera.MountedOnVehicleId);
+        var aircraft = AircraftInView(snapshot, frustum, now);
         bool headsMoving = CameraMarkers.Any(scene) && snapshot.World.Cameras.Any(c =>
             c.Kind == CameraKind.Ptz && c.Ptz != null && !string.Equals(c.Id, camera.Id, StringComparison.OrdinalIgnoreCase) && IsMoving(HeadOf(c)));
         var key = new FrameKey(scene, pose, imaging.Brightness, imaging.Contrast, imaging.ColorSaturation, camera.AngleGrid, width, height,
-            walkers.Count == 0 && vehicles.Count == 0 ? 0 : now.ToUnixTimeMilliseconds(),
+            walkers.Count == 0 && vehicles.Count == 0 && aircraft.Count == 0 ? 0 : now.ToUnixTimeMilliseconds(),
             headsMoving ? now.ToUnixTimeMilliseconds() : 0);
         if (key == _frameKey) return key;
         if (_frame == null || _frame.Width != width || _frame.Height != height)
             _frame = new Frame(width, height);
         var moving = walkers.Select(w => scene.Light(SceneBuilder.WalkerChunk(w.Walker, w.Pose, scene.Terrain))).ToList();
         moving.AddRange(vehicles.Select(v => scene.Light(SceneBuilder.VehicleChunk(v.Vehicle, v.Pose, scene.Terrain))));
+        moving.AddRange(aircraft.Select(a => scene.Light(SceneBuilder.AircraftChunk(a.Aircraft, a.Pose, a.WorldY))));
         moving.AddRange(CameraMarkers.Build(scene, snapshot.World, camera.Id, c => HeadOf(c).Position, now));
         _rasterizer.Render(scene, moving, key.Pose, _frame);
         ImageAdjustments.Apply(_frame, imaging);
@@ -113,6 +115,20 @@ public sealed class CachingFrameRenderer(TimeProvider time, Func<CameraModel, Pt
             // A sphere round the whole figure, swinging arms included.
             var centre = new Vector3(pose.X, scene.Terrain.HeightAt(pose.X, pose.Z) + walker.Height / 2, pose.Z);
             if (frustum.Sees(centre, walker.Height * 0.6f)) inView.Add((walker, pose));
+        }
+        return inView;
+    }
+
+    // The aircraft the camera can see now, whether or not they transmit: the picture shows what is in the
+    // sky, not what the feed reports. The sphere is round the whole airframe, wings and rotor included.
+    private static List<AircraftState> AircraftInView(SceneState.Snapshot snapshot, ViewFrustum frustum, DateTimeOffset now)
+    {
+        var inView = new List<AircraftState>();
+        foreach (var state in snapshot.Aircraft.At(now))
+        {
+            var model = state.Aircraft;
+            float reach = MathF.Max(model.Length, model.Wingspan) * 0.55f;
+            if (frustum.Sees(new Vector3(state.Pose.X, state.WorldY, state.Pose.Z), reach)) inView.Add(state);
         }
         return inView;
     }

@@ -1,4 +1,5 @@
 using OnvifSim;
+using OnvifSim.Adsb;
 using OnvifSim.Analytics;
 using OnvifSim.Editor;
 using OnvifSim.Onvif;
@@ -92,6 +93,8 @@ app.Services.GetRequiredService<RecordingLog>();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapEditorApi();
+// The aircraft as adsb.lol would report them, at the root like the real service (/v2/...).
+app.MapAdsb();
 if (!File.Exists(Path.Combine(webRoot, "index.html")))
     app.MapGet("/", () => "The editor is not built (building it needs Node.js); the API is under /api.");
 

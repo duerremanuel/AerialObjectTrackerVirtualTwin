@@ -6,7 +6,11 @@ namespace OnvifSim.World;
 // the store gets a new world. Readers take one snapshot and use it for a whole frame.
 public sealed class SceneState
 {
-    public sealed record Snapshot(WorldModel World, RenderScene Scene);
+    // The aircraft's flights are compiled with the scene, so one snapshot answers where they all are.
+    public sealed record Snapshot(WorldModel World, RenderScene Scene)
+    {
+        public AircraftFleet Aircraft { get; } = AircraftFleet.Build(World, Scene.Terrain);
+    }
 
     private volatile Snapshot _current;
 

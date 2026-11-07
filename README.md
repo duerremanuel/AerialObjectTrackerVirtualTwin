@@ -41,6 +41,21 @@ editor, and put away the ones you no longer use without losing them.
 - ONVIF DeviceIO (relay outputs and digital inputs) and geolocation (`GetGeoLocation`,
   `SetGeoLocation`), on a world anchored to a real place on the Earth.
 
+**Aircraft and an ADS-B feed**
+- Airplanes, helicopters and drones fly paths over the world: set waypoints in the editor (Draw → Airplane,
+  Helicopter or Drone; double-click or Enter to finish), pick straight legs or a smooth spline, and loop, fly
+  back (reverse) or restart. The pace is steady along the curve and, like people and cars, follows the clock,
+  so every camera, client and the feed see the aircraft in the same place. They are drawn in the camera pictures.
+- Every waypoint has an altitude above sea level. The world's `geo` anchor maps ground coordinates to latitude
+  and longitude, so cameras and aircraft all have GPS positions (cameras via ONVIF `GetGeoLocation` as well).
+- The feed copies the [adsb.lol](https://api.adsb.lol/docs) v2 API (readsb JSON, feet / knots / ft-min),
+  on the editor's port:
+  `GET /v2/point/{lat}/{lon}/{radius_nm}` (also `/v2/lat/{lat}/lon/{lon}/dist/{radius_nm}`) lists the transmitting
+  aircraft within the radius (largest radius 250 nm), each with `dst` and `dir`; `GET /v2/hex/{hex}` (also
+  `/v2/icao/{hex}`) returns one aircraft by its ICAO address. An aircraft with *Transmitting* off is still seen by
+  the cameras but not by the feed. Generated addresses are in `a00000`–`afffff`.
+  Only these routes are served; other adsb.lol endpoints are not.
+
 **Video**
 - RTSP for every camera: Motion JPEG always, H.264 through the bundled ffmpeg; RTP over UDP or
   interleaved in TCP.

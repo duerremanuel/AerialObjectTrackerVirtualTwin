@@ -1,4 +1,4 @@
-import { heightAt, routePoseAt, type World } from '../model';
+import { aircraftPoseAt, flightPathOf, heightAt, routePoseAt, type World } from '../model';
 import type { Selection } from '../store';
 
 // Where the editor camera should look for a selection: a point in the world, and how far back to
@@ -49,6 +49,15 @@ export function focusPoint(world: World, selection: Selection): FocusTarget | nu
     if (!car) return null;
     const pose = routePoseAt(car.route, car.speed, car.return, Date.now());
     return { point: [pose.x, ground(pose.x, pose.z) + car.height / 2, pose.z], distance: 20 };
+  }
+  if (selection.kind === 'aircraft') {
+    const aircraft = world.aircraft.find((a) => a.id === selection.id);
+    if (!aircraft) return null;
+    // Where it is now; one out of sight is looked for at the start of its flight.
+    const path = flightPathOf(aircraft);
+    const pose = aircraftPoseAt(path, Date.now()) ?? path.points[0];
+    if (!pose) return null;
+    return { point: [pose.x, pose.altitude - world.geo.elevation, pose.z], distance: Math.max(30, aircraft.wingspan * 4) };
   }
   const road = world.roads.find((r) => r.id === selection.id);
   if (!road || road.points.length === 0) return null;
