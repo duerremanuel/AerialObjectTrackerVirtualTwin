@@ -343,6 +343,78 @@ port 18180; `npm run e2e` runs the browser test.
 A change the simulator cannot run with (an unknown object type, a frame size that is not a
 multiple of 8, two cameras on one port…) is refused with 400 and the reason.
 
+## Aircraft and the ADS-B feed
+
+Aircraft are for testing aerial object trackers (such as Bob) and ADS-B clients against a scene you control:
+the same aircraft is in the cameras' pictures, in the editor, and in a feed that copies
+[adsb.lol](https://api.adsb.lol/docs).
+
+### Adding an aircraft
+
+1. In the editor choose **Draw** and then **Airplane**, **Helicopter** or **Drone**.
+2. Click the waypoints on the ground, in flying order; double-click or press Enter to finish. A new aircraft
+   starts at a typical height above the ground there (airplane 150 m, helicopter 80 m, drone 40 m).
+3. Select it (viewport or the *Aircraft* group of the contents list) to change it in the inspector.
+   A selected aircraft shows its path and a ball at each waypoint: drag a ball over the ground to move the
+   waypoint sideways, type an altitude to climb or descend. *Add waypoints at the end* continues the path.
+
+| Setting | Meaning |
+|---|---|
+| Kind | the shape in the pictures; changing it also takes that kind's size, speed and category |
+| Speed | metres per second along the path (55 m/s ≈ 107 kn) |
+| Between waypoints | *Smooth curve* (centripetal Catmull-Rom spline, passes through every waypoint, needs three or more) or *Straight legs* |
+| At the end | *Loop* (last waypoint back to the first), *Reverse* (fly it back) or *Restart* (gone for *Gone for* seconds, then again from the first waypoint) |
+| Time offset | shifts the flight in time, so two aircraft on one path are not on top of each other |
+| Altitude | per waypoint, metres **above sea level**; the world's `geo.elevation` is the altitude of the ground plane at y = 0 |
+
+An aircraft's place follows from the clock, like the walkers and cars, so every camera, every editor and the
+feed show it at the same spot. It is drawn in every camera's picture whether or not it transmits, so a
+tracker sees it; the cameras' ONVIF analytics metadata does not list aircraft yet.
+
+### GPS
+
+The world's `geo` (latitude, longitude, elevation of the origin and the direction of north; the *World*
+inspector, `PUT /api/geo`) maps world coordinates to the fake GPS system. Every waypoint shows its
+latitude and longitude in the inspector, a fixed camera shows where it stands, and ONVIF `GetGeoLocation`
+reports the same place. `GET /api/aircraft/{id}/pose` and `GET /api/cameras/{id}/pose` return the position
+now, with `geo`.
+
+### The ADS-B feed
+
+On the editor's port (default 18180), in readsb's JSON as adsb.lol serves it (feet, knots, feet per minute,
+nautical miles):
+
+| Request | Answers |
+|---|---|
+| `GET /v2/point/{lat}/{lon}/{radius_nm}` | the transmitting aircraft within the radius (at most 250 nm), each with `dst` and `dir` from that point; `/v2/lat/{lat}/lon/{lon}/dist/{radius_nm}` is the same |
+| `GET /v2/hex/{hex}` | one aircraft by its ICAO address; `/v2/icao/{hex}` is the same |
+
+```bash
+curl -s http://localhost:18180/v2/point/38.9923/-76.9378/10 | python3 -m json.tool
+curl -s http://localhost:18180/v2/hex/aaaf04
+```
+
+Point an ADS-B client at `http://localhost:18180` instead of `https://api.adsb.lol`. Only these routes exist.
+An aircraft with *Transmitting* off is invisible to the feed but still in the pictures (a non-cooperative
+target); a Restart path is absent from both while it is gone.
+
+Each aircraft reports `hex`, `flight` (call sign), `r` and `t` (registration and type, when set), `lat`,
+`lon`, `alt_baro` and `alt_geom`, `gs`, `track`, `baro_rate`, `squawk`, `emergency` (squawk 7700, 7600
+and 7500), `category`, `seen`, `seen_pos` and the usual accuracy fields. Hex addresses are made up in
+`a00000`–`afffff` unless you set one.
+
+### The editor API
+
+| Request | Effect |
+|---|---|
+| `PUT /api/aircraft/{id}` | creates or changes an aircraft (waypoints, kind, speed, identity ...); refused with 400 and the reason when invalid |
+| `DELETE /api/aircraft/{id}` | removes it |
+| `GET /api/aircraft/{id}/pose` | where it is now: world position, altitude, heading, speed, `geo`, `transmitting` |
+
+In a world file the aircraft are the `aircraft` list: `kind` (`airplane`, `helicopter`, `drone`), `waypoints`
+(`x`, `z`, `altitude`), `interpolation` (`spline`, `linear`), `path` (`loop`, `reverse`, `restart`), `speed`,
+`gapSeconds`, `offsetSeconds`, `hex`, `callsign`, `squawk`, `category`, `transmitting`, `length`, `wingspan`.
+
 ## RTSP
 
 Each stream is an ONVIF profile and an RTSP path. A new camera starts with `Profile_1` (JPEG) at
